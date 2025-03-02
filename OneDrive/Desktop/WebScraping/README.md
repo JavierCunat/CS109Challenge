@@ -1,1 +1,0 @@
-This is our repository for our MLG Project
