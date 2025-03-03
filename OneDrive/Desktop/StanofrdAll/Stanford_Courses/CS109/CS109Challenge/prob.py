@@ -201,17 +201,16 @@ for state, prob in sorted_states:
 #Data points from Table 6 "Cumulative percent of state prisoners released in 34 states in 2012 who were arrested following release, by number of prior arrests, age at first arrest, and year following release"
 prior_arrests = np.array([2, 3, 4, 5, 9, 10])
 recidivism_rates = np.array([37.9, 45.0, 55.0, 59.3, 62, 73.2])
-# Plot
+#plot
 plt.scatter(prior_arrests, recidivism_rates, label="Data")
 plt.xlabel("Number of Prior Arrests")
 plt.ylabel("Three Recidivism Rate (%)")
 plt.title("Impact of Prior Arrests on Recidivism")
 
-# Fit a regression line
+#best fit into a regression line
 z = np.polyfit(prior_arrests, recidivism_rates, 2)  # Quadratic fit
 p = np.poly1d(z)
 plt.plot(prior_arrests, p(prior_arrests), "r--", label="Trend Line")
-
 plt.legend()
 plt.show()
 
@@ -219,24 +218,22 @@ plt.show()
 #Which has a stronger impact: age at first arrest or prior arrests?
 #Perform a correlation analysis to compare.
 prior_arrests = np.array([2, 3.5, 7, 10])  # Midpoints for ranges
-recidivism_rates_prior = np.array([47.6, 60.3, 70.0, 81.0])  # Recidivism at Year 5
+recidivism_rates_prior = np.array([47.6, 60.3, 70.0, 81.0])  #Recidivism at Year 5
 
-age_at_first_arrest = np.array([17, 18.5, 22, 27, 32, 37, 42])  # Midpoints
-recidivism_rates_age = np.array([80.0, 75.6, 65.9, 57.7, 49.0, 42.5, 29.1])  # Recidivism at Year 5
+age_at_first_arrest = np.array([17, 18.5, 22, 27, 32, 37, 42])  #Midpoints of age
+recidivism_rates_age = np.array([80.0, 75.6, 65.9, 57.7, 49.0, 42.5, 29.1])  #Recidivism at Year 5
 
-# Compute correlations
+#Get correlations with scipy pearsonr
 corr_prior, _ = stats.pearsonr(prior_arrests, recidivism_rates_prior)
 corr_age, _ = stats.pearsonr(age_at_first_arrest, recidivism_rates_age)
 
 print(f"Correlation (Prior Arrests vs. Recidivism): {corr_prior:.2f}")
 print(f"Correlation (Age at First Arrest vs. Recidivism): {corr_age:.2f}")
 
-# Plot the data
+#Plot the data
 plt.figure(figsize=(10,5))
-
 plt.scatter(prior_arrests, recidivism_rates_prior, label="Prior Arrests vs. Recidivism", color="red")
 plt.scatter(age_at_first_arrest, recidivism_rates_age, label="Age at First Arrest vs. Recidivism", color="blue")
-
 plt.xlabel("Variable (Prior Arrests / Age at First Arrest)")
 plt.ylabel("Recidivism Rate (%)")
 plt.title("Comparing Impact of Prior Arrests vs. Age at First Arrest on Recidivism")
@@ -249,14 +246,14 @@ def bootstrap_correlation(x, y, n_bootstrap=1000):
     for _ in range(n_bootstrap):
         idx = np.random.choice(len(x), size=len(x), replace=True)
         sample_x, sample_y = x[idx], y[idx]
-        
+
         if np.std(sample_x) == 0 or np.std(sample_y) == 0:  
-            continue  # Skip cases where there's no variation
+            continue  #Skip cases where there's no variation
 
         correlations.append(stats.pearsonr(sample_x, sample_y)[0])
     
     return np.percentile(correlations, [2.5, 97.5])
 
-# Get 95% confidence interval for correlation
+#Get 95% confidence interval for correlation
 corr_ci = bootstrap_correlation(prior_arrests, recidivism_rates_prior)
 print(f"95% Confidence Interval for Correlation: ({corr_ci[0]:.2f}, {corr_ci[1]:.2f})")
