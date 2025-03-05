@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-import math
+import tkinter as tk
+from tkinter import messagebox
 
 #External state recidivism rates Source: https://csgjusticecenter.org/wp-content/uploads/2024/04/50-States-1-Goal_For-PDF_with508report.pdf
 state_recidivism_rates = {
@@ -96,6 +97,7 @@ state_release_proportion = {
     'Wyoming': 0.002
 }
 
+
 #Use Beta Distrbution to model proportions
 #This will draw a possible probability from the Beta distribution, reflecting uncertainty instead of just a point estimate, sample size from data study of 92100
 #Since our sample size is very large, we are pretty confident about our given probability, but this can help future smaller samples!
@@ -106,13 +108,20 @@ def likelihood(characterisitc, sample_size=92100, confidence=0.95):
     rate = recidivism_rates_by_characteristic_year_3_after_release[characterisitc]
     alpha = rate * sample_size
     beta_param = (1 - rate) * sample_size
-    average = stats.beta.ppf(((1 - confidence) / 2 + (1 + confidence) / 2) / 2, alpha, beta_param)
+    mode = (alpha - 1) / (alpha + beta_param - 2) if alpha > 1 and beta_param > 1 else rate
+    # If mode cannot be calculated, fall back to the average
+    if alpha <= 1 or beta_param <= 1:
+        average = rate
+    else:
+        average = mode
     return average
 
 #Compute P(Recidivism | State, age, race, sex) = P(State, age, race, sex | Recidivism) * P(Recidviism | State) / P(State, age, race, sex)
 def posterior_recidivism_by_state_given_optional_age_race_sex(state, age_group=None, race=None, sex=None):
     if state not in state_recidivism_rates:
         raise ValueError(f"State '{state}' not found in recidivism rates.")
+    if not any([age_group, race, sex]):
+        raise ValueError("At least one of 'age_group', 'race', or 'sex' must be provided.")
     
     prior = state_recidivism_rates[state]  #P(Recidivism | State)
     
@@ -136,27 +145,17 @@ def posterior_recidivism_by_state_given_optional_age_race_sex(state, age_group=N
     return posterior
 
 
-
-posterior = posterior_recidivism_by_state_given_optional_age_race_sex("Florida", age_group="40 or older", sex="Female")
-print(f"Posterior Probability: {posterior:.4f}")
-
-
-#Compute P(State | Recidivism, Race) = P(Recidivism, Race | State) * P(State) / P(Recidivsm, Race)
+#Compute P(State | Recidivism, Race, Age, Sex) = P(Recidivism, Race, Age, Sex | State) * P(State) / P(Recidivsm, Race, Age, Sex)
 def posterior_state_given_recidivism(race=None, age=None, sex=None):
     posterior_probs = {}
 
-    #P(Recidivism | Race) from national data
+    #P(Recidivism | Race or Age or Sex) from national data
     P_recidivism_given_race = recidivism_rates_by_characteristic_year_3_after_release.get(race, 1)
-
-    #P(Recidivism | age) from national data
     P_recidivism_given_age = recidivism_rates_by_characteristic_year_3_after_release.get(age, 1)
-
-    #P(Recidivism | sex) from national data
     P_recidivism_given_sex = recidivism_rates_by_characteristic_year_3_after_release.get(sex, 1)
 
     #Combined recidivism rate considering race, age, and sex
     P_recidivism_given_race_age_sex = (P_recidivism_given_race + P_recidivism_given_age + P_recidivism_given_sex) / 3
-
 
     #Compute denominator: Sum over all states
     normalization_factor = sum(
@@ -164,81 +163,64 @@ def posterior_state_given_recidivism(race=None, age=None, sex=None):
         for state in state_recidivism_rates
     )
 
-
-    print(f"Denominator P(Recidivism | Race={race}): {normalization_factor}")
-
     for state in state_recidivism_rates:
         # Estimate P(Recidivism | State, Race)
         likelihood = P_recidivism_given_race_age_sex * state_recidivism_rates[state]
-        print(f"Likelihood for state={state} - {race}: {likelihood}")
 
         #Prior: P(State)
         prior = state_release_proportion[state]
 
         #Bayes' theorem: P(State | Recidivism, Race)
         posterior = (likelihood * prior) / normalization_factor
-        print(f"Posterior for state={state} given Race {race}: {posterior}")
 
         posterior_probs[state] = posterior
 
     return posterior_probs
 
-
-#Compute most likely state for a recidivist given characteristics
-race_input = 'White'
-age_input = '24 or younger'
-sex_inpiut = 'Male'
-posterior_native = posterior_state_given_recidivism(race_input, age_input, sex_inpiut)
-#Sort states by probability biggest to smallest
-sorted_states = sorted(posterior_native.items(), key=lambda x: x[1], reverse=True)
-#Print top states
-print(f"Most likely state for a recidivist given they are {race_input}:")
-for state, prob in sorted_states:
-    print(f"{state}: {prob:.4f}")
-
-
 #Data with Prior Arrests, Find the Critical Point of number of Arrests in Recidivists
 #Data points from Table 6 "Cumulative percent of state prisoners released in 34 states in 2012 who were arrested following release, by number of prior arrests, age at first arrest, and year following release"
-prior_arrests = np.array([2, 3, 4, 5, 9, 10])
-recidivism_rates = np.array([37.9, 45.0, 55.0, 59.3, 62, 73.2])
-#plot
-plt.scatter(prior_arrests, recidivism_rates, label="Data")
-plt.xlabel("Number of Prior Arrests")
-plt.ylabel("Three Recidivism Rate (%)")
-plt.title("Impact of Prior Arrests on Recidivism")
+def prior_arrests_and_recidivism():
+    prior_arrests = np.array([2, 3, 4, 5, 9, 10])
+    recidivism_rates = np.array([37.9, 45.0, 55.0, 59.3, 62, 73.2])
+    #plot
+    plt.scatter(prior_arrests, recidivism_rates, label="Data")
+    plt.xlabel("Number of Prior Arrests")
+    plt.ylabel("Three Recidivism Rate (%)")
+    plt.title("Impact of Prior Arrests on Recidivism")
+    
+    #best fit into a regression line
+    z = np.polyfit(prior_arrests, recidivism_rates, 2)  # Quadratic fit
+    p = np.poly1d(z)
+    plt.plot(prior_arrests, p(prior_arrests), "r--", label="Trend Line")
+    plt.legend()
+    plt.show()
+    
+    #Compare Impact of Age vs. Prior Arrests
+    #Which has a stronger impact: age at first arrest or prior arrests?
+    #Perform a correlation analysis to compare.
+    prior_arrests = np.array([2, 3.5, 7, 10])  # Midpoints for ranges
+    recidivism_rates_prior = np.array([47.6, 60.3, 70.0, 81.0])  #Recidivism at Year 5
+    
+    age_at_first_arrest = np.array([17, 18.5, 22, 27, 32, 37, 42])  #Midpoints of age
+    recidivism_rates_age = np.array([80.0, 75.6, 65.9, 57.7, 49.0, 42.5, 29.1])  #Recidivism at Year 5
+    
+    #Get correlations with scipy pearsonr
+    corr_prior, _ = stats.pearsonr(prior_arrests, recidivism_rates_prior)
+    corr_age, _ = stats.pearsonr(age_at_first_arrest, recidivism_rates_age)
+    
+    print(f"Correlation (Prior Arrests vs. Recidivism): {corr_prior:.2f}")
+    print(f"Correlation (Age at First Arrest vs. Recidivism): {corr_age:.2f}")
+    
+    #Plot the data
+    plt.figure(figsize=(10,5))
+    plt.scatter(prior_arrests, recidivism_rates_prior, label="Prior Arrests vs. Recidivism", color="red")
+    plt.scatter(age_at_first_arrest, recidivism_rates_age, label="Age at First Arrest vs. Recidivism", color="blue")
+    plt.xlabel("Variable (Prior Arrests / Age at First Arrest)")
+    plt.ylabel("Recidivism Rate (%)")
+    plt.title("Comparing Impact of Prior Arrests vs. Age at First Arrest on Recidivism")
+    plt.legend()
+    plt.show()
 
-#best fit into a regression line
-z = np.polyfit(prior_arrests, recidivism_rates, 2)  # Quadratic fit
-p = np.poly1d(z)
-plt.plot(prior_arrests, p(prior_arrests), "r--", label="Trend Line")
-plt.legend()
-plt.show()
-
-#Compare Impact of Age vs. Prior Arrests
-#Which has a stronger impact: age at first arrest or prior arrests?
-#Perform a correlation analysis to compare.
-prior_arrests = np.array([2, 3.5, 7, 10])  # Midpoints for ranges
-recidivism_rates_prior = np.array([47.6, 60.3, 70.0, 81.0])  #Recidivism at Year 5
-
-age_at_first_arrest = np.array([17, 18.5, 22, 27, 32, 37, 42])  #Midpoints of age
-recidivism_rates_age = np.array([80.0, 75.6, 65.9, 57.7, 49.0, 42.5, 29.1])  #Recidivism at Year 5
-
-#Get correlations with scipy pearsonr
-corr_prior, _ = stats.pearsonr(prior_arrests, recidivism_rates_prior)
-corr_age, _ = stats.pearsonr(age_at_first_arrest, recidivism_rates_age)
-
-print(f"Correlation (Prior Arrests vs. Recidivism): {corr_prior:.2f}")
-print(f"Correlation (Age at First Arrest vs. Recidivism): {corr_age:.2f}")
-
-#Plot the data
-plt.figure(figsize=(10,5))
-plt.scatter(prior_arrests, recidivism_rates_prior, label="Prior Arrests vs. Recidivism", color="red")
-plt.scatter(age_at_first_arrest, recidivism_rates_age, label="Age at First Arrest vs. Recidivism", color="blue")
-plt.xlabel("Variable (Prior Arrests / Age at First Arrest)")
-plt.ylabel("Recidivism Rate (%)")
-plt.title("Comparing Impact of Prior Arrests vs. Age at First Arrest on Recidivism")
-plt.legend()
-plt.show()
 
 #Bootstrap function for correlation
 def bootstrap_correlation(x, y, n_bootstrap=1000):
@@ -255,5 +237,109 @@ def bootstrap_correlation(x, y, n_bootstrap=1000):
     return np.percentile(correlations, [2.5, 97.5])
 
 #Get 95% confidence interval for correlation
-corr_ci = bootstrap_correlation(prior_arrests, recidivism_rates_prior)
-print(f"95% Confidence Interval for Correlation: ({corr_ci[0]:.2f}, {corr_ci[1]:.2f})")
+#corr_ci = bootstrap_correlation(prior_arrests, recidivism_rates_prior)
+#print(f"95% Confidence Interval for Correlation: ({corr_ci[0]:.2f}, {corr_ci[1]:.2f})")
+
+
+# ----------------------------------------------- GUI ---------------------------------------- #
+# Function to handle the 'Next' button click and move to the main GUI
+def on_next_button_click():
+    # Destroy the welcome screen
+    welcome_screen.destroy()
+
+    # Create the main window
+    create_main_window()
+
+# Function to handle calculation on the 'Calculate' button click
+def p_recidivism_given_characteristics_button_click():
+    # Get the user input
+    state = state_input.get()
+    age_group = age_input.get()
+    race = race_input.get()
+    sex = sex_input.get()
+
+    # Calculate the posterior probability based on the recidivism data
+    try:
+        posterior = posterior_recidivism_by_state_given_optional_age_race_sex(state, age_group, race, sex)
+        result_label.config(text=f"P(Recidivism | State, Age Group, Race, Sex): {posterior:.4f}", font=("Arial", 14, "italic"))
+    except ValueError as e:
+        messagebox.showerror("Error", str(e))
+
+# Function to handle state probability calculation based on recidivism characteristics
+def p_state_recidivism_and_characteristics_button_click():
+    # Get the user input
+    race = race_input.get()
+    age_group = age_input.get()
+    sex = sex_input.get()
+
+    # Calculate the posterior probabilities for each state
+    posterior_probs = posterior_state_given_recidivism(race, age_group, sex)
+    
+    # Display the results
+    sorted_probs = sorted(posterior_probs.items(), key=lambda x: x[1], reverse=True)
+    result_text = "P(State | Recidivism, Race, Age, Sex):\n"
+    for state, prob in sorted_probs:
+        result_text += f"{state}: {prob:.4f}\n"
+    result_label.config(text=result_text, font=("Arial", 10, "italic"))
+
+
+
+# Function to create the main window after clicking "Next"
+def create_main_window():
+    global state_input, age_input, race_input, sex_input, result_label
+
+    # Create the main window (using the same Tk instance)
+    main_window = tk.Tk()
+    main_window.title("Probabilistic Recidivism Model")
+    main_window.geometry("600x400")  # Set the window size to 600x400
+    main_window.config(bg="lightblue")
+
+    # Create and place the widgets with better padding and alignment
+    tk.Label(main_window, text="State:", font=("Arial", 12, "bold"), bg="lightblue").grid(row=0, column=0, padx=10, pady=10, sticky="e")
+    state_input = tk.Entry(main_window, font=("Arial", 12), width=30)
+    state_input.grid(row=0, column=1, padx=10, pady=10)
+
+    tk.Label(main_window, text="Age Group:", font=("Arial", 12, "bold"), bg="lightblue").grid(row=1, column=0, padx=10, pady=10, sticky="e")
+    age_input = tk.Entry(main_window, font=("Arial", 12), width=30)
+    age_input.grid(row=1, column=1, padx=10, pady=10)
+
+    tk.Label(main_window, text="Race:", font=("Arial", 12, "bold"), bg="lightblue").grid(row=2, column=0, padx=10, pady=10, sticky="e")
+    race_input = tk.Entry(main_window, font=("Arial", 12), width=30)
+    race_input.grid(row=2, column=1, padx=10, pady=10)
+
+    tk.Label(main_window, text="Sex:", font=("Arial", 12, "bold"), bg="lightblue").grid(row=3, column=0, padx=10, pady=10, sticky="e")
+    sex_input = tk.Entry(main_window, font=("Arial", 12), width=30)
+    sex_input.grid(row=3, column=1, padx=10, pady=10)
+
+    # Buttons with better padding and larger size
+    tk.Button(main_window, text="P(Recidivism | State, Age Group, Race, Sex)", command=p_recidivism_given_characteristics_button_click, font=("Arial", 12), bg="lightgreen").grid(row=0, column=2, padx=10, pady=15)
+    tk.Button(main_window, text="P(State | Recidivism, Race, Age, Sex)", command=p_state_recidivism_and_characteristics_button_click, font=("Arial", 12), bg="lightcoral").grid(row=1, column=2, padx=10, pady=15)
+
+    # Button to move to the plotting screen
+    tk.Button(main_window, text="Prior Arrests and Recidivism Graphs", command=prior_arrests_and_recidivism, font=("Arial", 12), bg="lightblue").grid(row=2, column=2, columnspan=2, padx=10, pady=15)
+
+    # Result Label with a more prominent font
+    # Result Label with a more prominent font
+    result_label = tk.Label(main_window, text="Results will be shown here.", font=("Arial", 14, "italic"), bg="lightblue", justify="left", anchor="w")
+    result_label.grid(row=0, column=4, rowspan=6, padx=10, pady=15, sticky="w")
+    
+    # Run the main window
+    main_window.mainloop()
+
+# Create the welcome screen (this is the root window)
+welcome_screen = tk.Tk()
+welcome_screen.title("Welcome")
+welcome_screen.geometry("600x400")  # Set the window size to 600x400
+welcome_screen.config(bg="lightblue")
+
+# Display a welcome message
+welcome_label = tk.Label(welcome_screen, text="Welcome to the Probabilistic Recidivism Model\n\nClick Next to proceed.")
+welcome_label.pack(pady=20)
+
+# Next button to move to the main GUI
+next_button = tk.Button(welcome_screen, text="Next", command=on_next_button_click)
+next_button.pack(pady=10)
+
+# Start the welcome screen (root window)
+welcome_screen.mainloop()
+# ----------------------------------------------- GUI ---------------------------------------- #
