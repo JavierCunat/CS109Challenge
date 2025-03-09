@@ -46,7 +46,7 @@ state_recidivism_rates = {
 }
 
 
-# Recidivism rates by year 3 from Table 4 "Cumulative percent of state prisoners released in 34 states in 2012 who were arrested following release, by sex, race or ethnicity, age at release, and year following release"
+#Recidivism rates by year 3 from Table 4 "Cumulative percent of state prisoners released in 34 states in 2012 who were arrested following release, by sex, race or ethnicity, age at release, and year following release"
 recidivism_rates_by_characteristic_year_3_after_release = {
     'Male': 0.617,
     'Female': 0.529,
@@ -62,7 +62,7 @@ recidivism_rates_by_characteristic_year_3_after_release = {
 }
 
 
-#Proportion of number of state prisoners realeased in 34 States who were included in study sample, Appendix Table 1
+#Proportion of number of state prisoners realeased in 34 States who were included in BJS study sample, Appendix Table 1
 state_release_proportion = {
     'Arizona': 0.035,
     'California': 0.115,
@@ -100,6 +100,15 @@ state_release_proportion = {
     'Wyoming': 0.002
 }
 
+#Data from table 12 Cumulative percent of state prisoners released in 34 states in 2012 who were arrested following release for a type of offense
+cumulative_rates = [
+    [0.330, 0.478, 0.563, 0.615, 0.652],  # Violent
+    [0.440, 0.609, 0.697, 0.748, 0.783],  # Property
+    [0.343, 0.510, 0.597, 0.656, 0.698],  # Drug
+    [0.350, 0.508, 0.593, 0.649, 0.689]   # Public Order
+]
+
+# ------------------------------- I. Joint Probability Models, Beta, and Bayes Theorem P(Recidivism | Age, Sex, Race) -------------------------------- #
 
 #Use Beta Distrbution to model proportions
 #This will draw a possible probability from the Beta distribution, reflecting uncertainty instead of just a point estimate, sample size from data study of 92100
@@ -143,6 +152,8 @@ def posterior_recidivism_by_state_given_optional_age_race_sex(state, age_group=N
     return posterior
 
 
+# ------------------------------------ II. P(State | Recidivism, Age, Sex, Race) --------------------------------------- #
+
 #Compute P(State | Recidivism, Race, Age, Sex) = P(Recidivism, Race, Age, Sex | State) * P(State) / P(Recidivsm, Race, Age, Sex)
 def posterior_state_given_recidivism(race=None, age=None, sex=None):
     posterior_probs = {}
@@ -174,6 +185,9 @@ def posterior_state_given_recidivism(race=None, age=None, sex=None):
         posterior_probs[state] = posterior
 
     return posterior_probs
+
+
+# -------------------------- III. P(Recidivism | Prior Arrests = n) Graphs, histograms, correlation, bootstrapping --------------------------- #
 
 #Data with Prior Arrests, Find the Critical Point of number of Arrests in Recidivists
 #Data points from Table 6 "Cumulative percent of state prisoners released in 34 states in 2012 who were arrested following release, by number of prior arrests, age at first arrest, and year following release"
@@ -250,32 +264,40 @@ def bootstrap_correlation(x, y, n_bootstrap=1000):
 #corr_ci = bootstrap_correlation(prior_arrests, recidivism_rates_prior)
 #print(f"95% Confidence Interval for Correlation: ({corr_ci[0]:.2f}, {corr_ci[1]:.2f})")
 
-#Transition Matrix (example probabilities)
-def compute_markov_chain():
-    P = np.array([
-        [0.55, 0.49, 0.36, 0.47, 0.13],  # Violent
-        [0.49, 0.58, 0.40, 0.52, 0.14],  # Property
-        [0.36, 0.40, 0.55, 0.48, 0.21],  # Drug
-        [0.47, 0.52, 0.48, 0.57, 0.19],  # Public Order
-        [0.00, 0.00, 0.00, 0.00, 1.00]   # No Recidivism (absorbing state)
-    ])
 
-    #initial state distribution
-    initial_state = np.array([0.25, 0.25, 0.25, 0.25, 0])
+# --------------------------------- IV.  Transition matrix for a Markov chain model ----------------------------------------- #
 
-    P = P / P.sum(axis=1, keepdims=True) #normalize
+#Compute Probability of a recidivist transitioning to a different offense type with markov chain
+def compute_transition_matrix(cumulative_rates):
+    num_categories = len(cumulative_rates)
+    num_years = len(cumulative_rates[0])
+    
+    P = np.zeros((num_categories + 1, num_categories + 1))  #+1 for absorbing state
 
-    num_years = 5
-    state_distribution = initial_state
+    for i, rates in enumerate(cumulative_rates):
+        #yearly transition probabilities from cumulative rates
+        yearly_probs = [rates[0]] + [rates[j] - rates[j - 1] for j in range(1, len(rates))]
 
-    #initial state: Assume all prisoners start in the first category
-    state_probs = np.array([1.0, 0, 0, 0, 0])
+        #normalize the yearly transition probabilities
+        total_prob = sum(yearly_probs)
+        if total_prob > 0:
+            yearly_probs = [prob / total_prob for prob in yearly_probs]
+        else:
+            yearly_probs = [1 / num_years] * num_years  #even distribution if no change occurs
 
-    years = 5
-    results = []
-    for year in range(years):
-        state_probs = state_probs @ P  #matrix multiplication
-        results.append([year + 1] + [round(val, 3) for val in state_probs])
+        #need to calculate the prob of transitioning between categories
+        #matrix P will be filled with the probabilities of transitioning from state i to state j
+        for j in range(num_categories):
+            P[i, j] = yearly_probs[j]
+
+        #probability of transitioning to "No Recidivism" (absorbing state)
+        P[i, -1] = 1 - sum(P[i, :-1])  #remaining probability goes to the absorbing state
+
+    P[-1, -1] = 1
+    return P
+
+def transition_matrix_window():
+    transition_matrix = compute_transition_matrix(cumulative_rates)
 
     result_window = tk.Toplevel()
     result_window.title("Recidivism Probabilities for committed offense")
@@ -288,13 +310,19 @@ def compute_markov_chain():
         tree.heading(col, text=col)
         tree.column(col, anchor="center")
 
+    # Convert transition matrix into a list of rows
+    results = []
+    for i, row in enumerate(transition_matrix):
+        results.append(["Year " + str(i + 1)] + list(np.round(row, 3)))  # Round to 3 decimal places
+
+    # Insert data into the Treeview
     for row in results:
         tree.insert("", "end", values=row)
 
     tree.pack(expand=True, fill="both")
 
 
-# ----------------------------------------------- GUI ---------------------------------------- #
+# -------------------------------------------------------- GUI -------------------------------------------------- #
 #handle the 'Next' button click and move to the main GUI
 def on_next_button_click():
     welcome_screen.destroy()
@@ -362,8 +390,7 @@ def create_main_window():
     tk.Button(main_window, text="P(Recidivism | State, Age Group, Race, Sex)", command=p_recidivism_given_characteristics_button_click, font=("Arial", 12), bg="#fec89a").grid(row=0, column=2, padx=10, pady=15)
     tk.Button(main_window, text="P(State | Recidivism, Race, Age, Sex)", command=p_state_recidivism_and_characteristics_button_click, font=("Arial", 12), bg="#fec89a").grid(row=1, column=2, padx=10, pady=15)
     tk.Button(main_window, text="Prior Arrests and Age of First Arrest Recidivism Graphs", command=prior_arrests_and_recidivism, font=("Arial", 12), bg="#fec89a").grid(row=2, column=2, columnspan=2, padx=10, pady=15)
-    tk.Button(main_window, text="Markov Chain Recidivism Table", command=compute_markov_chain, font=("Arial", 12), bg="#fec89a").grid(row=3, column=2, padx=10, pady=15)
-
+    tk.Button(main_window, text="Markov Chain Recidivism Table", command=transition_matrix_window, font=("Arial", 12), bg="#fec89a").grid(row=3, column=2, padx=10, pady=15)
 
     #results
     result_label = tk.Label(
